@@ -45,5 +45,6 @@ jobs:
           path: |
             vystup/GcmsPorovnanie-*-win-x64.zip
             vystup/SHA256SUMS.txt
+            testdata/is/**
           if-no-files-found: error
           retention-days: 7
