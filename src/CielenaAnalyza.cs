@@ -41,6 +41,8 @@ public static class CielenaAnalyza
         public double? QualifierToQuantApex { get; set; }
         public int? QualifiersDetected { get; set; }
         public int? QualifiersTotal { get; set; }
+        public double? QualifierCoelutionCorr { get; set; }
+        public bool IntegrationClipped { get; set; }
         public double? PeakStartMin { get; set; }
         public double? PeakEndMin { get; set; }
         public string Integration { get; set; } = "automatic screening boundaries; unvalidated";
@@ -87,7 +89,7 @@ public static class CielenaAnalyza
     {
         var row = new Riadok { File = m.Nazov, Analyte = latka.Name, ReferenceStatus = latka.ReferenceStatus };
         var ions = new[] { latka.QuantIon }.Concat(latka.QualifierIons).Distinct().ToArray();
-        if (latka.QuantIon <= 0 || latka.RtMax <= latka.RtMin || latka.QualifierIons.Length == 0)
+        if (latka.QuantIon <= 0 || latka.RtMax <= latka.RtMin || latka.QualifierIons.Length == 0 || latka.MinCosine < 0 || latka.MinCosine > 1 || latka.MinQualifierFraction < 0 || latka.QualifierIons.Contains(latka.QuantIon))
         { row.Reason = "Neplatna konfiguracia analytu."; return row; }
         if (m.N < 20 || m.Rt.Length != m.Spec.Length || m.Rt.Zip(m.Rt.Skip(1)).Any(p => p.First >= p.Second))
         { row.Reason = "Chybajuce alebo neusporiadane skeny."; return row; }
@@ -140,24 +142,49 @@ public static class CielenaAnalyza
         double apexSignal = Math.Max(0, sp[apex][q] - bestBase);
         double threshold = Math.Max(3 * bestNoise, apexSignal * 0.01);
         int left = apex, right = apex;
-        double maxWindowSeconds = 15;
-        while (left > 0 && rt[apex] - rt[left - 1] <= maxWindowSeconds && sp[left - 1][q] - bestBase > threshold) left--;
-        while (right < m.N - 1 && rt[right + 1] - rt[apex] <= maxWindowSeconds && sp[right + 1][q] - bestBase > threshold) right++;
-        // Include adjacent boundary points when possible (interpolation is not needed for screening).
+        const double maxWindowSeconds = 15;
+        // Never silently truncate a peak: if it remains above the detection
+        // threshold at a search/window boundary, report QC failure.
+        while (left > 0 && rt[apex] - rt[left - 1] <= maxWindowSeconds &&
+               sp[left - 1][q] - bestBase > threshold) left--;
+        while (right < m.N - 1 && rt[right + 1] - rt[apex] <= maxWindowSeconds &&
+               sp[right + 1][q] - bestBase > threshold) right++;
+        bool leftClipped = left == 0 ||
+            rt[apex] - rt[left] >= maxWindowSeconds ||
+            (left > 0 && rt[apex] - rt[left - 1] > maxWindowSeconds &&
+             sp[left - 1][q] - bestBase > threshold);
+        bool rightClipped = right == m.N - 1 ||
+            rt[right] - rt[apex] >= maxWindowSeconds ||
+            (right < m.N - 1 && rt[right + 1] - rt[apex] > maxWindowSeconds &&
+             sp[right + 1][q] - bestBase > threshold);
         if (left > 0) left--;
         if (right < m.N - 1) right++;
+        bool reachedLimit = leftClipped || rightClipped;
+        // Shape correlation over the integrated peak for the first qualifier.
+        int firstQualifierIndex = latka.QualifierIons[0] - m.MzMin;
+        double[] eicQuant = Enumerable.Range(left, right - left + 1)
+            .Select(k => Math.Max(0, sp[k][q] - bestBase)).ToArray();
+        double qualifierBaseline = Median(Enumerable.Range(0, m.N)
+            .Where(j => Math.Abs(rt[j] - rt[apex]) >= 6 && Math.Abs(rt[j] - rt[apex]) <= 12)
+            .Select(j => sp[j][firstQualifierIndex]));
+        double[] eicQualifier = Enumerable.Range(left, right - left + 1)
+            .Select(k => Math.Max(0, sp[k][firstQualifierIndex] - qualifierBaseline)).ToArray();
+        double shapeCorr = eicQuant.Length >= 3 && Sig.Std(eicQuant) > 0 && Sig.Std(eicQualifier) > 0
+            ? Sig.Corr(eicQuant, eicQualifier) : double.NaN;
         row.RtMin = rt[apex] / 60;
         row.CosineMasked = bestCos;
         row.SnrApprox = apexSignal / bestNoise;
         row.QualifierToQuantApex = bestRatio;
         row.QualifiersDetected = bestQual;
         row.QualifiersTotal = latka.QualifierIons.Length;
+        row.QualifierCoelutionCorr = double.IsFinite(shapeCorr) ? shapeCorr : null;
+        row.IntegrationClipped = reachedLimit;
         row.PeakStartMin = rt[left] / 60;
         row.PeakEndMin = rt[right] / 60;
         row.AreaQuant = Area(rt, sp, q, bestBase, left, right);
-        bool reachedLimit = rt[apex] - rt[left] >= maxWindowSeconds || rt[right] - rt[apex] >= maxWindowSeconds;
         bool intensityOk = row.SnrApprox >= 5;
-        if (bestCos >= latka.MinCosine && bestQual >= 1 && intensityOk && !reachedLimit)
+        bool coelutionOk = double.IsFinite(shapeCorr) && shapeCorr >= 0.8;
+        if (bestCos >= latka.MinCosine && bestQual >= 1 && intensityOk && !reachedLimit && coelutionOk)
         {
             row.Status = "CANDIDATE_REVIEW";
             row.Reason = "Pracovna referencia; nezavisla chemicka identita a hranice integracie vyzaduju kontrolu.";
@@ -165,7 +192,7 @@ public static class CielenaAnalyza
         else
         {
             row.Status = "REVIEW_REQUIRED";
-            row.Reason = $"cos={bestCos:0.000}; kvalifikatory={bestQual}; SNR={row.SnrApprox:0.0}; hranica={reachedLimit}";
+            row.Reason = $"cos={bestCos:0.000}; kvalifikatory={bestQual}; SNR={row.SnrApprox:0.0}; hranica={reachedLimit}; EIC_korelacia={shapeCorr:0.000}";
         }
         return row;
     }
@@ -175,9 +202,9 @@ public static class CielenaAnalyza
     static void WriteCsv(string file, List<Riadok> data)
     {
         using var writer = new StreamWriter(file, false, new UTF8Encoding(true));
-        writer.WriteLine("file,analyte,reference_status,status,reason,rt_min,cosine_masked,area_quant,snr_approx,qualifier_to_quant_apex,qualifiers_detected,qualifiers_total,peak_start_min,peak_end_min,integration,concentration");
+        writer.WriteLine("file,analyte,reference_status,status,reason,rt_min,cosine_masked,area_quant,snr_approx,qualifier_to_quant_apex,qualifiers_detected,qualifiers_total,peak_start_min,peak_end_min,qualifier_coelution_corr,integration_clipped,integration,concentration");
         foreach (var x in data)
-            writer.WriteLine(string.Join(",", new[] { Escape(x.File), Escape(x.Analyte), Escape(x.ReferenceStatus), Escape(x.Status), Escape(x.Reason), Num(x.RtMin), Num(x.CosineMasked), Num(x.AreaQuant), Num(x.SnrApprox), Num(x.QualifierToQuantApex), x.QualifiersDetected?.ToString() ?? "", x.QualifiersTotal?.ToString() ?? "", Num(x.PeakStartMin), Num(x.PeakEndMin), Escape(x.Integration), Escape(x.Concentration) }));
+            writer.WriteLine(string.Join(",", new[] { Escape(x.File), Escape(x.Analyte), Escape(x.ReferenceStatus), Escape(x.Status), Escape(x.Reason), Num(x.RtMin), Num(x.CosineMasked), Num(x.AreaQuant), Num(x.SnrApprox), Num(x.QualifierToQuantApex), x.QualifiersDetected?.ToString() ?? "", x.QualifiersTotal?.ToString() ?? "", Num(x.PeakStartMin), Num(x.PeakEndMin), Num(x.QualifierCoelutionCorr), x.IntegrationClipped.ToString(), Escape(x.Integration), Escape(x.Concentration) }));
     }
 
     // Usage: --cielene config.json vzorka.raw [vzorka2.mzML ...] --out vysledky.csv
