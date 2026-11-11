@@ -1,0 +1,49 @@
+name: Windows experimental build
+
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - feature/cielena-analyza-experimental-v1
+    paths:
+      - 'src/**'
+      - 'GcmsPorovnanie.csproj'
+      - 'build.sh'
+      - 'fetch-thermo.sh'
+      - '.github/workflows/windows-test.yml'
+
+permissions:
+  contents: read
+
+jobs:
+  build-windows:
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Checkout experimental branch
+        uses: actions/checkout@v4
+
+      - name: Set up .NET 8
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: '8.0.x'
+
+      - name: Download Thermo RAW reader dependencies
+        run: bash fetch-thermo.sh
+
+      - name: Build self-contained Windows x64 executable
+        run: RIDS=win-x64 DOTNET=dotnet bash build.sh
+
+      - name: Check expected output exists
+        run: |
+          test -s vystup/win-x64/GcmsPorovnanie.exe
+          test -n "$(find vystup -maxdepth 1 -name 'GcmsPorovnanie-*-win-x64.zip' -print -quit)"
+
+      - name: Upload private test artifact (not a GitHub Release)
+        uses: actions/upload-artifact@v4
+        with:
+          name: GCMS-Windows-experimental
+          path: |
+            vystup/GcmsPorovnanie-*-win-x64.zip
+            vystup/SHA256SUMS.txt
+          if-no-files-found: error
+          retention-days: 7
