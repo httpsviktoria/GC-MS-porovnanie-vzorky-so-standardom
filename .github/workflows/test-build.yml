@@ -27,3 +27,6 @@ jobs:
 
       - name: Compile application
         run: dotnet build GcmsPorovnanie.csproj -c Release
+
+      - name: Synthetic targeted-analysis smoke tests
+        run: dotnet run --project GcmsPorovnanie.csproj -c Release --no-build -- --test-cielene
