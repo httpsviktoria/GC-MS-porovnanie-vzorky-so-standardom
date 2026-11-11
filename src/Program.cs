@@ -43,6 +43,7 @@ public static class Program
         CultureInfo.DefaultThreadCurrentCulture = CultureInfo.InvariantCulture;
         try
         {
+            if (args.Length > 0 && args[0] == "--cielene") return CielenaAnalyza.Run(args.Skip(1).ToArray());
             if (args.Length > 0 && args[0] == "--dump") return Dump(args[1], args[2]);
             if (args.Length > 0 && args[0] == "--porovnaj") return Cli(args.Skip(1).ToArray());
             Server(args);
