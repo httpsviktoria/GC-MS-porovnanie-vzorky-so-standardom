@@ -1,0 +1,15 @@
+{
+  "analytes": [
+    {
+      "name": "4-fenylbutyrat (interny standard)",
+      "reference_file": "referencia/IS_pracovna_referencia.csv",
+      "reference_status": "WORKING_UNCONFIRMED",
+      "quant_ion": 221,
+      "qualifier_ions": [236,75,146,117,104,203],
+      "rt_min": 14.7,
+      "rt_max": 15.5,
+      "min_screening_cosine": 0.8,
+      "min_apex_qualifier_fraction": 0.001
+    }
+  ]
+}
