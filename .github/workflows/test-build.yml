@@ -1,0 +1,29 @@
+
+name: Test C# build
+
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - feature/cielena-analyza-experimental-v1
+
+permissions:
+  contents: read
+
+jobs:
+  test-build:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup .NET 8
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: '8.0.x'
+
+      - name: Fetch Thermo dependencies
+        run: bash fetch-thermo.sh
+
+      - name: Compile application
+        run: dotnet build GcmsPorovnanie.csproj -c Release
